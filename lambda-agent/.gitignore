@@ -1,0 +1,8 @@
+# Never push these
+.env
+venv/
+__pycache__/
+*.pyc
+response.json
+function.zip
+.DS_Store
