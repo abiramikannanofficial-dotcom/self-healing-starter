@@ -6,3 +6,4 @@ __pycache__/
 response.json
 function.zip
 .DS_Store
+lambda-test-trigger/function.zip
