@@ -146,7 +146,6 @@ def render_log_box(lines):
     )
 
 # ── Cached resources ──────────────────────────────────────────────────────────
-@st.cache_resource
 def get_reader(profile, region):
     from cloudwatch_reader import CloudWatchReader
     return CloudWatchReader(profile=profile, region=region)
@@ -328,6 +327,7 @@ def detect_and_diagnose(fn, profile, region):
         sh_event(f"Invoking Lambda: {fn}")
 
         reader = get_reader(profile, region)
+        sh_log("Got the reader")
 
         # Read real timeout from Lambda config
         cfg_live     = reader.get_lambda_config(fn)
