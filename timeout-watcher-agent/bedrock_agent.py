@@ -19,12 +19,14 @@ load_dotenv()
 def _make_session(profile="devops-demo", region="us-east-1"):
     key    = os.getenv("AWS_ACCESS_KEY_ID")
     secret = os.getenv("AWS_SECRET_ACCESS_KEY")
+    token  = os.getenv("AWS_SESSION_TOKEN") 
     region = os.getenv("AWS_DEFAULT_REGION", region)
 
     if key and secret:
         return boto3.Session(
             aws_access_key_id=key,
             aws_secret_access_key=secret,
+            aws_session_token=token, 
             region_name=region,
         )
     else:
