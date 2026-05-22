@@ -21,6 +21,10 @@ def _make_session(profile="devops-demo", region="us-east-1"):
     secret = os.getenv("AWS_SECRET_ACCESS_KEY")
     token  = os.getenv("AWS_SESSION_TOKEN") 
     region = os.getenv("AWS_DEFAULT_REGION", region)
+    
+    print(f"KEY present: {bool(key)}, prefix: {key[:8] if key else 'MISSING'}")
+    print(f"SECRET present: {bool(secret)}")
+    print(f"TOKEN present: {bool(token)}, prefix: {token[:8] if token else 'MISSING'}")
 
     if key and secret:
         return boto3.Session(
