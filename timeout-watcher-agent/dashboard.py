@@ -356,8 +356,7 @@ def detect_and_diagnose(fn, profile, region):
         sh_event("Waiting for CloudWatch data ingestion…")
         logs_found = False
 
-        for attempt in range(6):           # max 30s (6 x 5s)
-            time.sleep(5)
+        for attempt in range(6):
             sh_log(f"⏳ Checking… attempt {attempt + 1}/6 ({(attempt+1)*5}s elapsed)")
 
             fresh_logs    = reader.get_recent_logs(fn, minutes=5)
@@ -377,7 +376,7 @@ def detect_and_diagnose(fn, profile, region):
                 sh_event(f"CloudWatch metrics ready ({(attempt+1)*5}s)")
                 logs_found = True
                 break
-
+            time.sleep(5)  # 👈 moved to end, skipped if we break early     
         if not logs_found:
             sh_log("⚠ Proceeding with available data")
             sh_event("Proceeding with available CloudWatch data")
