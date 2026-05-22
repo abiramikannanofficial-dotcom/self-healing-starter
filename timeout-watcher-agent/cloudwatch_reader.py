@@ -48,6 +48,7 @@ def _make_session(profile="devops-demo", region="us-east-1"):
 
 class CloudWatchReader:
     def __init__(self, profile="devops-demo", region="us-east-1"):
+        print("🔥 CloudWatchReader.__init__ called")  # 👈
         session      = _make_session(profile, region)
         self.cw      = session.client("cloudwatch")
         self.logs    = session.client("logs")
