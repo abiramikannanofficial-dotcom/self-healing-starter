@@ -11,6 +11,7 @@ import time
 import json
 import threading
 from datetime import datetime
+from pr_agent import open_fix_pr
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -84,6 +85,7 @@ DEFAULTS = {
     "function_name":  "demo-healing-function",
     "profile":        "devops-demo",
     "region":         "us-east-1",
+    "pr_result": None
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -101,6 +103,7 @@ if "SH" not in st.session_state:
         "fix_result":     None,
         "approval_state": None,
         "running":        False,
+        "pr_result": None
     }
 SH = st.session_state.SH
 
@@ -157,7 +160,7 @@ def get_agent(profile, region):
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### ⚙️ Settings")
+    st.markdown("### Settings")
     st.markdown("---")
     fn      = st.text_input("Lambda function name", value=st.session_state.function_name)
     profile = st.text_input("AWS profile",          value=st.session_state.profile)
@@ -242,7 +245,7 @@ st.markdown("---")
 # ── Diagnosis panel ───────────────────────────────────────────────────────────
 diag = SH.get("diagnosis")
 if diag:
-    st.markdown("### 🧠 Claude's Diagnosis")
+    st.markdown("### Claude's Diagnosis")
     col_diag, col_fix = st.columns(2)
 
     with col_diag:
@@ -276,40 +279,64 @@ if diag:
     approval = SH.get("approval_state")
 
     if approval == "pending":
-        st.markdown("### 🙋 Human Approval Required")
+        st.markdown("### Human Approval Required")
         st.warning(f"Claude wants to: **{diag.get('fix_description')}**")
 
         col_approve, col_reject, col_space = st.columns([1, 1, 3])
         with col_approve:
-            if st.button("✅ Approve & Apply Fix", use_container_width=True):
+            if st.button("Approve & Apply Fix", use_container_width=True):
                 SH["approval_state"] = "approved"
                 st.rerun()
         with col_reject:
-            if st.button("❌ Reject", use_container_width=True):
+            if st.button("Reject", use_container_width=True):
                 SH["approval_state"] = "rejected"
-                sh_log("❌ Fix rejected by human. No changes made.")
+                sh_log("Fix rejected by human. No changes made.")
                 sh_event("Fix REJECTED by operator. Lambda unchanged.")
                 SH["agent_stage"]  = 99
                 SH["agent_status"] = "idle"
                 st.rerun()
 
     elif approval == "rejected":
-        st.error("❌ Fix rejected. No changes were made to Lambda.")
+        st.error("Fix rejected. No changes were made to Lambda.")
 
     elif approval == "approved":
         fix = SH.get("fix_result")
         if fix and fix.get("success"):
-            st.success(f"✅ Fix applied! Timeout updated to `{fix.get('new_timeout')}s`")
+            st.success(f"Fix applied! Timeout updated to `{fix.get('new_timeout')}s`")
+
+            # ── PR button ─────────────────────────────────────────────────────
+            pr_result = SH.get("pr_result")
+            if pr_result is None:
+                if st.button("🔀 Open GitHub PR", use_container_width=False):
+                    with st.spinner("Creating branch and opening PR…"):
+                        result = open_fix_pr(
+                            detection  = SH["detection"],
+                            diagnosis  = SH["diagnosis"],
+                            fix_result = fix,
+                            outcome    = "applied",
+                        )
+                        SH["pr_result"] = result
+                        st.rerun()
+            elif pr_result.get("success"):
+                st.markdown(
+                    f'✅ **PR opened:** [View on GitHub]({pr_result["pr_url"]})',
+                    unsafe_allow_html=True,
+                )
+                st.caption(f'Branch: `{pr_result["branch"]}`')
+            else:
+                st.error(f'PR failed: {pr_result["message"]}')
+
             st.markdown("**Invoke Lambda again to confirm it now succeeds:**")
             st.code(f"""aws lambda invoke \\
-  --function-name {fn} \\
-  --payload '{{"test":"verify"}}' \\
-  --cli-binary-format raw-in-base64-out \\
-  --region {region} \\
-  --profile {profile} \\
-  response.json && cat response.json""", language="bash")
+    --function-name {fn} \\
+    --payload '{{"test":"verify"}}' \\
+    --cli-binary-format raw-in-base64-out \\
+    --region {region} \\
+    --profile {profile} \\
+    response.json && cat response.json""", language="bash")
         elif fix:
             st.error(f"Fix failed: {fix.get('message')}")
+    
 
 # ── Detection raw data ────────────────────────────────────────────────────────
 if det and det.get("logs"):
@@ -323,7 +350,7 @@ def detect_and_diagnose(fn, profile, region):
         # ── Stage 0 — Invoke Lambda to trigger failure ────────────────────────
         SH["agent_stage"]  = 0
         SH["agent_status"] = "busy"
-        sh_log("⚡ Invoking Lambda to trigger failure…")
+        sh_log("Invoking Lambda to trigger failure…")
         sh_event(f"Invoking Lambda: {fn}")
 
         reader = get_reader(profile, region)
@@ -332,7 +359,7 @@ def detect_and_diagnose(fn, profile, region):
         # Read real timeout from Lambda config
         cfg_live     = reader.get_lambda_config(fn)
         real_timeout = cfg_live["timeout"]
-        sh_log(f"🔍 Lambda config — timeout: {real_timeout}s  memory: {cfg_live['memory']}MB")
+        sh_log(f"Lambda config — timeout: {real_timeout}s  memory: {cfg_live['memory']}MB")
 
         # Invoke Lambda — will timeout intentionally
         try:
@@ -343,20 +370,20 @@ def detect_and_diagnose(fn, profile, region):
             )
             result = json.loads(resp["Payload"].read())
             if resp.get("FunctionError"):
-                sh_log(f"⚡ Lambda errored as expected: {result.get('errorType','unknown')}")
+                sh_log(f"Lambda errored as expected: {result.get('errorType','unknown')}")
                 sh_event(f"Lambda error triggered: {result.get('errorType')}")
             else:
-                sh_log("⚡ Lambda completed without error")
+                sh_log("Lambda completed without error")
                 sh_event("Lambda invoked — no error triggered")
         except Exception as e:
-            sh_log(f"⚡ Invoke exception: {str(e)[:80]}")
+            sh_log(f"Invoke exception: {str(e)[:80]}")
 
         # ── wait for CloudWatch metrics to appear ───────────────────
         sh_log("⏳ Waiting for CloudWatch metrics…")
         time.sleep(15)  # single wait — metrics usually appear within 15s
 
         # ── Detect issues ─────────────────────────────────────────────────────
-        sh_log("🔍 Analysing CloudWatch metrics and logs…")
+        sh_log("🔍 Analyzing CloudWatch metrics and logs…")
         detection      = reader.detect_issue(fn, timeout_setting=real_timeout)
         SH["detection"] = detection
 
@@ -389,10 +416,10 @@ def detect_and_diagnose(fn, profile, region):
         diagnosis = agent.diagnose(detection)
         SH["diagnosis"] = diagnosis
 
-        sh_log(f"🧠 Root cause: {diagnosis.get('root_cause')}")
-        sh_log(f"🧠 Confidence: {diagnosis.get('confidence')}")
-        sh_log(f"🧠 Fix: {diagnosis.get('fix_description')}")
-        sh_log(f"🧠 Risk: {diagnosis.get('risk')}")
+        sh_log(f"Root cause: {diagnosis.get('root_cause')}")
+        sh_log(f"Confidence: {diagnosis.get('confidence')}")
+        sh_log(f"Fix: {diagnosis.get('fix_description')}")
+        sh_log(f"Risk: {diagnosis.get('risk')}")
         for step in diagnosis.get("reasoning", []):
             sh_log(f"   → {step}")
         sh_event(f"Claude diagnosis: {diagnosis.get('fix_action')}")
@@ -435,19 +462,19 @@ def detect_and_diagnose(fn, profile, region):
 
         # ── Stage 4 — Verify ──────────────────────────────────────────────────
         SH["agent_stage"] = 4
-        sh_log("✅ Verifying fix — re-reading Lambda config…")
+        sh_log("Verifying fix — re-reading Lambda config…")
         time.sleep(2)
 
         updated = reader.get_lambda_config(fn)
-        sh_log(f"✅ Lambda timeout now: {updated['timeout']}s")
-        sh_log(f"✅ Incident resolved. Human-approved self-healing complete.")
+        sh_log(f"Lambda timeout now: {updated['timeout']}s")
+        sh_log(f"Incident resolved. Human-approved self-healing complete.")
         sh_event("RESOLVED: Lambda self-healed with human approval.")
 
         SH["agent_status"] = "done"
         SH["agent_stage"]  = 99
 
     except Exception as e:
-        sh_log(f"❌ Error: {str(e)}")
+        sh_log(f"Error: {str(e)}")
         sh_event(f"Agent error: {str(e)[:60]}")
         SH["agent_status"] = "idle"
     finally:
