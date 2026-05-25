@@ -1,0 +1,10 @@
+{
+  "function_name": "demo-healing-function",
+  "timeout": 10,
+  "memory": 128,
+  "runtime": "python3.11",
+  "proposed_at": "20260525-120515",
+  "fix_action": "UPDATE_TIMEOUT",
+  "root_cause": "The function is timing out due to its long execution time",
+  "confidence": "HIGH"
+}
