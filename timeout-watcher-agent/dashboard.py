@@ -2,7 +2,8 @@
 dashboard.py — Agentic DevOps · Real-Time Self-Healing
 Detects real Lambda issues via CloudWatch,
 diagnoses via Claude on Bedrock,
-asks for human approval before applying fix.
+asks for human approval before opening a GitHub PR.
+Merging the PR applies the fix via GitHub Actions.
 
 Run: streamlit run dashboard.py
 """
@@ -11,10 +12,10 @@ import time
 import json
 import threading
 from datetime import datetime
-from pr_agent import open_fix_pr
 
 import streamlit as st
 from dotenv import load_dotenv
+from pr_agent import open_fix_pr
 
 load_dotenv()
 
@@ -53,7 +54,6 @@ st.markdown("""
     .stage-done    { background:#1a4731;color:#3fb950;border:1px solid #238636;border-radius:6px;padding:4px 10px;font-size:11px;text-align:center; }
     .stage-active  { background:#1c2d4a;color:#58a6ff;border:1px solid #1f6feb;border-radius:6px;padding:4px 10px;font-size:11px;text-align:center; }
     .stage-pending { background:#161b22;color:#6e7681;border:1px solid #30363d;border-radius:6px;padding:4px 10px;font-size:11px;text-align:center; }
-    /* Detect Issue button — solid blue */
     div[data-testid="column"]:nth-of-type(3) button {
         background-color:#1f6feb!important; color:#ffffff!important;
         border:1px solid #388bfd!important; font-weight:600;
@@ -79,13 +79,12 @@ DEFAULTS = {
     "event_logs":     [],
     "detection":      None,
     "diagnosis":      None,
-    "fix_result":     None,
+    "pr_result":      None,
     "approval_state": None,
     "running":        False,
     "function_name":  "demo-healing-function",
     "profile":        "devops-demo",
     "region":         "us-east-1",
-    "pr_result": None
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -100,16 +99,15 @@ if "SH" not in st.session_state:
         "event_logs":     [],
         "detection":      None,
         "diagnosis":      None,
-        "fix_result":     None,
+        "pr_result":      None,
         "approval_state": None,
         "running":        False,
-        "pr_result": None
     }
 SH = st.session_state.SH
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-STAGES = ["Detect", "Diagnose", "Awaiting Approval", "Apply Fix", "Verify"]
-ICONS  = ["🔍",     "🧠",       "🙋",                "🔧",        "✅"]
+STAGES = ["Detect", "Diagnose", "Awaiting Approval", "Open PR", "Verify"]
+ICONS  = ["🔍",     "🧠",       "🙋",                "🔀",      "✅"]
 
 def ts():
     return datetime.now().strftime("%H:%M:%S")
@@ -169,7 +167,7 @@ with st.sidebar:
     st.session_state.profile       = profile
     st.session_state.region        = region
     st.markdown("---")
-    st.caption("Detect → Diagnose → Approve → Fix → Verify")
+    st.caption("Detect → Diagnose → Approve → PR → Merge → Fix")
 
 # ── Header ────────────────────────────────────────────────────────────────────
 h1, h2, h3, h4 = st.columns([3.5, 2, 1.5, 1])
@@ -184,7 +182,7 @@ with h2:
         "idle":  ("badge-ok",    "● Idle"),
         "busy":  ("badge-busy",  "◉ Running"),
         "alert": ("badge-alarm", "⚠ Issue detected"),
-        "done":  ("badge-done",  "✅ Resolved"),
+        "done":  ("badge-done",  "✅ PR Opened"),
     }
     css, lbl = badge_map.get(SH["agent_status"], ("badge-ok", "● Idle"))
     st.markdown(f'<span class="{css}">{lbl}</span>', unsafe_allow_html=True)
@@ -280,17 +278,20 @@ if diag:
 
     if approval == "pending":
         st.markdown("### Human Approval Required")
-        st.warning(f"Claude wants to: **{diag.get('fix_description')}**")
+        st.info(
+            f"Claude wants to: **{diag.get('fix_description')}**  \n"
+            f"Approving will open a GitHub PR. The fix is applied only when the PR is merged."
+        )
 
         col_approve, col_reject, col_space = st.columns([1, 1, 3])
         with col_approve:
-            if st.button("Approve & Apply Fix", use_container_width=True):
+            if st.button("Approve & Open PR", use_container_width=True):
                 SH["approval_state"] = "approved"
                 st.rerun()
         with col_reject:
             if st.button("Reject", use_container_width=True):
                 SH["approval_state"] = "rejected"
-                sh_log("Fix rejected by human. No changes made.")
+                sh_log("Fix rejected by human. No PR opened.")
                 sh_event("Fix REJECTED by operator. Lambda unchanged.")
                 SH["agent_stage"]  = 99
                 SH["agent_status"] = "idle"
@@ -300,43 +301,38 @@ if diag:
         st.error("Fix rejected. No changes were made to Lambda.")
 
     elif approval == "approved":
-        fix = SH.get("fix_result")
-        if fix and fix.get("success"):
-            st.success(f"Fix applied! Timeout updated to `{fix.get('new_timeout')}s`")
+        pr_result = SH.get("pr_result")
 
-            # ── PR button ─────────────────────────────────────────────────────
-            pr_result = SH.get("pr_result")
-            if pr_result is None:
-                if st.button("🔀 Open GitHub PR", use_container_width=False):
-                    with st.spinner("Creating branch and opening PR…"):
-                        result = open_fix_pr(
-                            detection  = SH["detection"],
-                            diagnosis  = SH["diagnosis"],
-                            fix_result = fix,
-                            outcome    = "applied",
-                        )
-                        SH["pr_result"] = result
-                        st.rerun()
-            elif pr_result.get("success"):
-                st.markdown(
-                    f'✅ **PR opened:** [View on GitHub]({pr_result["pr_url"]})',
-                    unsafe_allow_html=True,
+        if pr_result is None:
+            # Open PR now
+            with st.spinner("Creating branch and opening PR on GitHub…"):
+                result = open_fix_pr(
+                    detection  = SH["detection"],
+                    diagnosis  = SH["diagnosis"],
                 )
-                st.caption(f'Branch: `{pr_result["branch"]}`')
-            else:
-                st.error(f'PR failed: {pr_result["message"]}')
+                SH["pr_result"]    = result
+                SH["agent_stage"]  = 99
+                SH["agent_status"] = "done"
+                if result["success"]:
+                    sh_log(f"🔀 PR opened: {result['pr_url']}")
+                    sh_event(f"PR created: {result['branch']}")
+                else:
+                    sh_log(f"PR failed: {result['message']}")
+                    sh_event(f"PR error: {result['message']}")
+            st.rerun()
 
-            st.markdown("**Invoke Lambda again to confirm it now succeeds:**")
-            st.code(f"""aws lambda invoke \\
-    --function-name {fn} \\
-    --payload '{{"test":"verify"}}' \\
-    --cli-binary-format raw-in-base64-out \\
-    --region {region} \\
-    --profile {profile} \\
-    response.json && cat response.json""", language="bash")
-        elif fix:
-            st.error(f"Fix failed: {fix.get('message')}")
-    
+        elif pr_result.get("success"):
+            st.success("PR opened successfully!")
+            st.markdown(
+                f"🔀 **[View PR on GitHub]({pr_result['pr_url']})**  \n"
+                f"Branch: `{pr_result['branch']}`  \n"
+                f"Merge the PR to apply the fix to Lambda automatically via GitHub Actions."
+            )
+        else:
+            st.error(f"PR failed: {pr_result['message']}")
+            if st.button("Retry PR"):
+                SH["pr_result"] = None
+                st.rerun()
 
 # ── Detection raw data ────────────────────────────────────────────────────────
 if det and det.get("logs"):
@@ -350,18 +346,16 @@ def detect_and_diagnose(fn, profile, region):
         # ── Stage 0 — Invoke Lambda to trigger failure ────────────────────────
         SH["agent_stage"]  = 0
         SH["agent_status"] = "busy"
-        sh_log("Invoking Lambda to trigger failure…")
+        sh_log("⚡ Invoking Lambda to trigger failure…")
         sh_event(f"Invoking Lambda: {fn}")
 
         reader = get_reader(profile, region)
         sh_log("Got the reader")
 
-        # Read real timeout from Lambda config
         cfg_live     = reader.get_lambda_config(fn)
         real_timeout = cfg_live["timeout"]
-        sh_log(f"Lambda config — timeout: {real_timeout}s  memory: {cfg_live['memory']}MB")
+        sh_log(f"🔍 Lambda config — timeout: {real_timeout}s  memory: {cfg_live['memory']}MB")
 
-        # Invoke Lambda — will timeout intentionally
         try:
             resp   = reader.lamb.invoke(
                 FunctionName=fn,
@@ -370,7 +364,7 @@ def detect_and_diagnose(fn, profile, region):
             )
             result = json.loads(resp["Payload"].read())
             if resp.get("FunctionError"):
-                sh_log(f"Lambda errored as expected: {result.get('errorType','unknown')}")
+                sh_log(f"⚡ Lambda errored as expected: {result.get('errorType','unknown')}")
                 sh_event(f"Lambda error triggered: {result.get('errorType')}")
             else:
                 sh_log("Lambda completed without error")
@@ -378,17 +372,27 @@ def detect_and_diagnose(fn, profile, region):
         except Exception as e:
             sh_log(f"Invoke exception: {str(e)[:80]}")
 
-        # ── wait for CloudWatch metrics to appear ───────────────────
-        sh_log("⏳ Waiting for CloudWatch metrics…")
-        time.sleep(15)  # single wait — metrics usually appear within 15s
+        # ── Wait for CloudWatch logs ──────────────────────────────────────────
+        sh_log("⏳ Polling CloudWatch — waiting for data to appear…")
+        max_attempts = 6
+        for attempt in range(1, max_attempts + 1):
+            time.sleep(5)
+            sh_log(f"⏳ Checking… attempt {attempt}/{max_attempts} ({attempt * 5}s elapsed)")
+            check     = reader.detect_issue(fn, timeout_setting=real_timeout)
+            tl        = check.get("timeout_logs", [])
+            has_issue = check.get("has_issue", False)
+            if tl or has_issue:
+                sh_log("✅ Issue data found in CloudWatch.")
+                break
+        else:
+            sh_log("⚠ Proceeding with available data")
 
         # ── Detect issues ─────────────────────────────────────────────────────
-        sh_log("🔍 Analyzing CloudWatch metrics and logs…")
-        detection      = reader.detect_issue(fn, timeout_setting=real_timeout)
+        sh_log("🔍 Analysing CloudWatch metrics and logs…")
+        detection       = reader.detect_issue(fn, timeout_setting=real_timeout)
         SH["detection"] = detection
 
         mtr = detection["metrics"]
-        cfg = detection["config"]
         sh_log(f"🔍 Invocations: {mtr['total_invokes']}  Errors: {mtr['total_errors']}")
         sh_log(f"🔍 Max duration: {mtr['max_duration_ms']}ms  Throttles: {mtr['total_throttles']}")
 
@@ -429,7 +433,7 @@ def detect_and_diagnose(fn, profile, region):
         SH["agent_stage"]    = 2
         SH["approval_state"] = "pending"
         sh_log("🙋 Waiting for human approval…")
-        sh_event("Awaiting operator approval before applying fix")
+        sh_event("Awaiting operator approval before opening PR")
 
         # Poll every 0.5s, max 5 minutes
         for _ in range(600):
@@ -445,33 +449,10 @@ def detect_and_diagnose(fn, profile, region):
             SH["running"] = False
             return
 
-        # ── Stage 3 — Apply fix ───────────────────────────────────────────────
+        # ── Stage 3 — PR opened by dashboard UI (not thread) ─────────────────
         SH["agent_stage"] = 3
-        sh_log("🔧 Applying fix to Lambda…")
-        sh_event("Applying fix via AWS Lambda API")
-
-        fix_result      = agent.apply_fix(fn, diagnosis)
-        SH["fix_result"] = fix_result
-
-        if fix_result["success"]:
-            sh_log(f"🔧 Fix applied! New timeout: {fix_result.get('new_timeout')}s")
-            sh_event(f"Fix applied: timeout → {fix_result.get('new_timeout')}s")
-        else:
-            sh_log(f"🔧 Fix failed: {fix_result.get('message')}")
-        time.sleep(0.5)
-
-        # ── Stage 4 — Verify ──────────────────────────────────────────────────
-        SH["agent_stage"] = 4
-        sh_log("Verifying fix — re-reading Lambda config…")
-        time.sleep(2)
-
-        updated = reader.get_lambda_config(fn)
-        sh_log(f"Lambda timeout now: {updated['timeout']}s")
-        sh_log(f"Incident resolved. Human-approved self-healing complete.")
-        sh_event("RESOLVED: Lambda self-healed with human approval.")
-
-        SH["agent_status"] = "done"
-        SH["agent_stage"]  = 99
+        sh_log("🔀 Approval received — opening PR on GitHub…")
+        sh_event("PR creation triggered by operator approval")
 
     except Exception as e:
         sh_log(f"Error: {str(e)}")
@@ -492,7 +473,7 @@ if reset_btn:
         "event_logs":     [],
         "detection":      None,
         "diagnosis":      None,
-        "fix_result":     None,
+        "pr_result":      None,
         "approval_state": None,
         "running":        False,
     }

@@ -1,18 +1,19 @@
 """
 pr_agent.py
-Opens a GitHub PR automatically after a self-healing event.
+Opens a GitHub PR as the approval gate for self-healing.
 
-What it does:
-  1. Creates a new branch  fix/lambda-<issue_type>-<timestamp>
-  2. Commits an updated lambda_config.json with the new timeout/memory
-  3. Opens a PR with a structured description — root cause, fix, metrics snapshot
+Flow:
+  1. Issue detected + Claude diagnosis ready
+  2. Human reviews proposed fix in dashboard
+  3. Human clicks "Approve & Open PR"
+  4. This module creates branch + commits lambda_config.json + opens PR
+  5. Team reviews and merges PR on GitHub
+  6. GitHub Action (apply_fix.yml) triggers and applies fix to Lambda
 
-Requirements:
+Requirements (in .env or Streamlit secrets):
   GITHUB_TOKEN  — personal access token with repo scope
   GITHUB_REPO   — e.g. "abiramikannanofficial-dotcom/self-healing-starter"
   GITHUB_BRANCH — base branch to PR against (default: "develop")
-
-All three can live in .env alongside your AWS credentials.
 """
 
 import os
@@ -40,30 +41,26 @@ def _headers():
 
 def _raise(resp, context=""):
     if not resp.ok:
-        raise RuntimeError(f"GitHub API error{' (' + context + ')' if context else ''}: "
-                           f"{resp.status_code} — {resp.text[:300]}")
+        raise RuntimeError(
+            f"GitHub API error ({context}): {resp.status_code} — {resp.text[:300]}"
+        )
 
-
-# ── Low-level GitHub helpers ──────────────────────────────────────────────────
 
 def _get_base_sha(repo: str, branch: str) -> str:
-    """Return the latest commit SHA on the base branch."""
     r = requests.get(f"{GITHUB_API}/repos/{repo}/git/ref/heads/{branch}", headers=_headers())
     _raise(r, "get_base_sha")
     return r.json()["object"]["sha"]
 
 
 def _create_branch(repo: str, new_branch: str, sha: str):
-    """Create a new branch from a given commit SHA."""
     payload = {"ref": f"refs/heads/{new_branch}", "sha": sha}
     r = requests.post(f"{GITHUB_API}/repos/{repo}/git/refs", headers=_headers(), json=payload)
     if r.status_code == 422 and "already exists" in r.text:
-        return  # branch already exists — fine
+        return
     _raise(r, "create_branch")
 
 
 def _get_file_sha(repo: str, path: str, branch: str):
-    """Return the blob SHA of an existing file (needed to update it). None if not found."""
     r = requests.get(
         f"{GITHUB_API}/repos/{repo}/contents/{path}",
         headers=_headers(),
@@ -76,7 +73,6 @@ def _get_file_sha(repo: str, path: str, branch: str):
 
 
 def _upsert_file(repo: str, branch: str, path: str, content: str, message: str):
-    """Create or update a file on the given branch."""
     existing_sha = _get_file_sha(repo, path, branch)
     payload = {
         "message": message,
@@ -85,7 +81,6 @@ def _upsert_file(repo: str, branch: str, path: str, content: str, message: str):
     }
     if existing_sha:
         payload["sha"] = existing_sha
-
     r = requests.put(
         f"{GITHUB_API}/repos/{repo}/contents/{path}",
         headers=_headers(),
@@ -95,24 +90,16 @@ def _upsert_file(repo: str, branch: str, path: str, content: str, message: str):
 
 
 def _open_pr(repo: str, title: str, body: str, head: str, base: str) -> dict:
-    """Open a pull request. Returns the PR dict from GitHub."""
-    payload = {
-        "title": title,
-        "body":  body,
-        "head":  head,
-        "base":  base,
-    }
+    payload = {"title": title, "body": body, "head": head, "base": base}
     r = requests.post(f"{GITHUB_API}/repos/{repo}/pulls", headers=_headers(), json=payload)
     _raise(r, "open_pr")
     return r.json()
 
 
-# ── PR body builder ───────────────────────────────────────────────────────────
-
-def _build_pr_body(detection: dict, diagnosis: dict, fix_result: dict, outcome: str, repo: str = "") -> str:
-    fn   = detection["function_name"]
-    cfg  = detection["config"]
-    mtr  = detection["metrics"]
+def _build_pr_body(detection: dict, diagnosis: dict, repo: str) -> str:
+    fn     = detection["function_name"]
+    cfg    = detection["config"]
+    mtr    = detection["metrics"]
     issues = detection.get("issues", [])
     params = diagnosis.get("fix_params", {})
 
@@ -126,20 +113,14 @@ def _build_pr_body(detection: dict, diagnosis: dict, fix_result: dict, outcome: 
 
     old_timeout = cfg.get("timeout", "?")
     old_memory  = cfg.get("memory",  "?")
-    new_timeout = params.get("timeout") or fix_result.get("new_timeout") or old_timeout
-    new_memory  = params.get("memory")  or fix_result.get("new_memory")  or old_memory
+    new_timeout = params.get("timeout") or old_timeout
+    new_memory  = params.get("memory")  or old_memory
+    timestamp   = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-    outcome_section = (
-        f"✅ **Fix applied successfully** at {timestamp}"
-        if outcome == "applied"
-        else f"⚠️ **Fix was proposed but not applied** (outcome: `{outcome}`)"
-    )
-
-    return f"""## 🤖 Self-Healing — Automated Fix
+    return f"""## 🤖 Self-Healing — Proposed Fix
 
 > Generated by the Agentic DevOps dashboard · {timestamp}
+> **Merging this PR will automatically apply the fix to Lambda via GitHub Actions.**
 
 ---
 
@@ -148,7 +129,7 @@ def _build_pr_body(detection: dict, diagnosis: dict, fix_result: dict, outcome: 
 |---|---|
 | Name | `{fn}` |
 | Runtime | `{cfg.get('runtime', '?')}` |
-| Region | `{detection.get('config', {}).get('last_modified', '?')}` |
+| Last modified | `{cfg.get('last_modified', '?')}` |
 
 ---
 
@@ -188,41 +169,26 @@ def _build_pr_body(detection: dict, diagnosis: dict, fix_result: dict, outcome: 
 
 ---
 
-### ✅ Outcome
-{outcome_section}
-
----
-
-### 🔍 Next Steps
-- [ ] Re-invoke Lambda to confirm it no longer times out
+### ✅ To Apply
+- [ ] Review the diagnosis and proposed fix above
+- [ ] Merge this PR — GitHub Actions will update the Lambda automatically
 - [ ] Monitor CloudWatch for 30 min post-fix
-- [ ] Review and merge this PR once verified
+- [ ] Re-invoke Lambda to confirm it no longer times out
 
 ---
-*Auto-generated by [self-healing-starter](https://github.com/{repo_placeholder}) · do not edit manually*
-""".replace("{repo_placeholder}", GITHUB_REPO)
+*Auto-generated by [self-healing-starter](https://github.com/{repo}) · do not edit manually*
+"""
 
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 def open_fix_pr(
-    detection:  dict,
-    diagnosis:  dict,
-    fix_result: dict,
-    outcome:    str = "applied",   # "applied" | "rejected" | "pending"
-    repo:       str = "",
-    base_branch:str = "",
+    detection:   dict,
+    diagnosis:   dict,
+    repo:        str = "",
+    base_branch: str = "",
 ) -> dict:
     """
-    Main entry point. Call this after a self-healing event.
-
-    Returns:
-        {
-            "success": bool,
-            "pr_url":  str,         # HTML URL of the opened PR
-            "branch":  str,         # name of the fix branch
-            "message": str,         # human-readable status
-        }
+    Opens a PR with the proposed fix. Does NOT apply the fix itself.
+    The fix is applied when the PR is merged via GitHub Actions.
     """
     repo        = repo        or GITHUB_REPO
     base_branch = base_branch or BASE_BRANCH
@@ -238,40 +204,37 @@ def open_fix_pr(
     branch     = f"fix/lambda-{issue_type}-{timestamp}"
 
     try:
-        # 1. Branch off base
         base_sha = _get_base_sha(repo, base_branch)
         _create_branch(repo, branch, base_sha)
 
-        # 2. Commit updated lambda_config.json
         params     = diagnosis.get("fix_params", {})
         new_config = {
             "function_name": fn,
-            "timeout":       params.get("timeout") or fix_result.get("new_timeout") or detection["config"]["timeout"],
-            "memory":        params.get("memory")  or fix_result.get("new_memory")  or detection["config"]["memory"],
+            "timeout":       params.get("timeout") or detection["config"]["timeout"],
+            "memory":        params.get("memory")  or detection["config"]["memory"],
             "runtime":       detection["config"]["runtime"],
-            "fix_applied_at": timestamp,
+            "proposed_at":   timestamp,
             "fix_action":    diagnosis.get("fix_action"),
             "root_cause":    diagnosis.get("root_cause"),
+            "confidence":    diagnosis.get("confidence"),
         }
         _upsert_file(
             repo    = repo,
             branch  = branch,
             path    = "lambda_config.json",
             content = json.dumps(new_config, indent=2),
-            message = f"fix(lambda): auto-heal {issue_type} on {fn} [{timestamp}]",
+            message = f"fix(lambda): propose auto-heal {issue_type} on {fn} [{timestamp}]",
         )
 
-        # 3. Open PR
-        title  = f"🤖 fix(lambda): auto-heal {issue_type} on `{fn}`"
-        body = _build_pr_body(detection, diagnosis, fix_result, outcome, repo=repo)
-        pr     = _open_pr(repo, title, body, head=branch, base=base_branch)
-        pr_url = pr.get("html_url", "")
+        title = f"🤖 fix(lambda): auto-heal {issue_type} on `{fn}`"
+        body  = _build_pr_body(detection, diagnosis, repo)
+        pr    = _open_pr(repo, title, body, head=branch, base=base_branch)
 
         return {
             "success": True,
-            "pr_url":  pr_url,
+            "pr_url":  pr.get("html_url", ""),
             "branch":  branch,
-            "message": f"PR opened: {pr_url}",
+            "message": f"PR opened: {pr.get('html_url', '')}",
         }
 
     except Exception as e:
