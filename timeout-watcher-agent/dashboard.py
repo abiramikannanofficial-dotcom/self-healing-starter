@@ -351,35 +351,9 @@ def detect_and_diagnose(fn, profile, region):
         except Exception as e:
             sh_log(f"⚡ Invoke exception: {str(e)[:80]}")
 
-        # ── Smart poll — wait for CloudWatch logs to appear ───────────────────
-        sh_log("⏳ Polling CloudWatch — waiting for data to appear…")
-        sh_event("Waiting for CloudWatch data ingestion…")
-        logs_found = False
-
-        for attempt in range(6):
-            sh_log(f"⏳ Checking… attempt {attempt + 1}/6 ({(attempt+1)*5}s elapsed)")
-
-            fresh_logs    = reader.get_recent_logs(fn, minutes=5)
-            quick_metrics = reader.get_metrics(fn, minutes=5)
-            timeout_hits  = [
-                l for l in fresh_logs
-                if "timed out" in l["msg"].lower() or "task timed out" in l["msg"].lower()
-            ]
-
-            if timeout_hits:
-                sh_log(f"✅ Logs found after {(attempt+1)*5}s — proceeding!")
-                sh_event(f"CloudWatch logs ready ({(attempt+1)*5}s)")
-                logs_found = True
-                break
-            elif quick_metrics["total_errors"] > 0:
-                sh_log(f"✅ Metrics data found after {(attempt+1)*5}s — proceeding!")
-                sh_event(f"CloudWatch metrics ready ({(attempt+1)*5}s)")
-                logs_found = True
-                break
-            time.sleep(5)  # 👈 moved to end, skipped if we break early     
-        if not logs_found:
-            sh_log("⚠ Proceeding with available data")
-            sh_event("Proceeding with available CloudWatch data")
+        # ── wait for CloudWatch metrics to appear ───────────────────
+        sh_log("⏳ Waiting for CloudWatch metrics…")
+        time.sleep(15)  # single wait — metrics usually appear within 15s
 
         # ── Detect issues ─────────────────────────────────────────────────────
         sh_log("🔍 Analysing CloudWatch metrics and logs…")
