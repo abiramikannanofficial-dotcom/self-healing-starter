@@ -109,7 +109,7 @@ def _open_pr(repo: str, title: str, body: str, head: str, base: str) -> dict:
 
 # ── PR body builder ───────────────────────────────────────────────────────────
 
-def _build_pr_body(detection: dict, diagnosis: dict, fix_result: dict, outcome: str) -> str:
+def _build_pr_body(detection: dict, diagnosis: dict, fix_result: dict, outcome: str, repo: str = "") -> str:
     fn   = detection["function_name"]
     cfg  = detection["config"]
     mtr  = detection["metrics"]
@@ -263,7 +263,7 @@ def open_fix_pr(
 
         # 3. Open PR
         title  = f"🤖 fix(lambda): auto-heal {issue_type} on `{fn}`"
-        body   = _build_pr_body(detection, diagnosis, fix_result, outcome)
+        body = _build_pr_body(detection, diagnosis, fix_result, outcome, repo=repo)
         pr     = _open_pr(repo, title, body, head=branch, base=base_branch)
         pr_url = pr.get("html_url", "")
 
