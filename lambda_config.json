@@ -1,0 +1,9 @@
+{
+  "function_name": "demo-healing-function",
+  "timeout": 60,
+  "memory": 256,
+  "runtime": "python3.11",
+  "fix_applied_at": "20260525-082522",
+  "fix_action": "UPDATE_TIMEOUT",
+  "root_cause": "The Lambda function is timing out due to a long-running task or insufficient memory allocation."
+}
