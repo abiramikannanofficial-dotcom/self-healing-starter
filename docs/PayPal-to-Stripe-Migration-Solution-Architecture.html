@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Solution Architecture – PayPal to Stripe Migration | Presidio</title>
+<style>
+  :root {
+    --presidio-blue: #003087;
+    --presidio-light-blue: #0066cc;
+    --presidio-accent: #00a3e0;
+    --bg: #f5f7fa;
+    --card-bg: #ffffff;
+    --border: #dde3ed;
+    --text: #1a2233;
+    --text-muted: #5a6578;
+    --edited: #fff8e1;
+    --edited-border: #f59e0b;
+    --success: #16a34a;
+    --warning: #d97706;
+    --danger: #dc2626;
+    --info: #0066cc;
+    --tag-blue: #e0f0ff;
+    --tag-green: #e0fce8;
+    --tag-red: #ffe0e0;
+    --tag-yellow: #fff7e0;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.6; }
+  #topbar {
+    position: sticky; top: 0; z-index: 100;
+    background: var(--presidio-blue);
+    color: #fff;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 24px; gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.25);
+  }
+  #topbar .logo { font-size: 18px; font-weight: 700; letter-spacing: 1px; }
+  #topbar .logo span { color: var(--presidio-accent); }
+  #topbar .toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 600;
+    cursor: pointer; border: none; transition: all .18s;
+  }
+  .btn-primary { background: var(--presidio-accent); color: #fff; }
+  .btn-primary:hover { background: #0085b8; }
+  .btn-secondary { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.3); }
+  .btn-secondary:hover { background: rgba(255,255,255,.25); }
+  .btn-success { background: #16a34a; color: #fff; }
+  .btn-success:hover { background: #15803d; }
+  .btn-warning { background: #f59e0b; color: #fff; }
+  .btn-warning:hover { background: #d97706; }
+  #status-bar {
+    background: #1e3a5f; color: #a8c4e0;
+    padding: 5px 24px; font-size: 12px;
+    display: flex; gap: 20px; align-items: center;
+  }
+  #status-bar span { display: flex; align-items: center; gap: 4px; }
+  #status-bar .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--presidio-accent); }
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px 20px; }
+  .page-header {
+    background: linear-gradient(135deg, var(--presidio-blue) 0%, #0055a5 100%);
+    color: #fff; padding: 32px 40px; border-radius: 12px; margin-bottom: 24px;
+    position: relative; overflow: hidden;
+  }
+  .page-header::after { content: ''; position: absolute; right: -40px; top: -40px; width: 220px; height: 220px; border-radius: 50%; background: rgba(255,255,255,.05); }
+  .page-header h1 { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
+  .page-header .meta { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; opacity: .85; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+  .badge-ready { background: #d1fae5; color: #065f46; }
+  .section { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 20px; overflow: hidden; transition: box-shadow .2s; }
+  .section:hover { box-shadow: 0 2px 12px rgba(0,48,135,.08); }
+  .section.edited { border-color: var(--edited-border); background: var(--edited); }
+  .section-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; background: #f8fafc; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; }
+  .section.edited .section-header { background: #fef3c7; }
+  .section-header h2 { font-size: 15px; font-weight: 700; color: var(--presidio-blue); display: flex; align-items: center; gap: 8px; }
+  .section-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .btn-sm { padding: 4px 10px; font-size: 11px; border-radius: 5px; font-weight: 600; cursor: pointer; border: 1px solid transparent; transition: all .15s; }
+  .btn-edit { background: #e0f0ff; color: var(--info); border-color: #b3d4f5; }
+  .btn-edit:hover { background: #b3d4f5; }
+  .btn-reset { background: #fee2e2; color: var(--danger); border-color: #fca5a5; }
+  .btn-reset:hover { background: #fca5a5; }
+  .btn-copy { background: #f0fdf4; color: var(--success); border-color: #86efac; }
+  .btn-copy:hover { background: #86efac; }
+  .section-body { padding: 20px; }
+  .field-group { margin-bottom: 16px; }
+  .field-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--text-muted); margin-bottom: 5px; }
+  .editable-text { width: 100%; min-height: 80px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; font-family: inherit; font-size: 13px; line-height: 1.6; color: var(--text); background: #fff; resize: vertical; transition: border-color .15s; }
+  .editable-text:focus { outline: none; border-color: var(--presidio-accent); box-shadow: 0 0 0 3px rgba(0,163,224,.12); }
+  .editable-input { width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font-family: inherit; font-size: 13px; color: var(--text); background: #fff; }
+  .char-count { font-size: 10px; color: var(--text-muted); text-align: right; margin-top: 3px; }
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 16px; border-bottom: 2px solid var(--border); }
+  .tab { padding: 7px 14px; font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 6px 6px 0 0; border: 1px solid transparent; color: var(--text-muted); background: transparent; transition: all .15s; margin-bottom: -2px; }
+  .tab.active { background: var(--card-bg); border-color: var(--border); border-bottom-color: var(--card-bg); color: var(--presidio-blue); }
+  .tab:hover:not(.active) { background: #f0f4fa; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+  .phase-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .phase-meta { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  .phase-meta-item { background: #f0f4fa; border-radius: 6px; padding: 6px 12px; font-size: 12px; }
+  .phase-meta-item strong { color: var(--presidio-blue); }
+  .table-wrapper { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: #f0f4fa; color: var(--presidio-blue); font-weight: 700; text-align: left; padding: 9px 12px; border: 1px solid var(--border); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+  td { padding: 8px 10px; border: 1px solid var(--border); vertical-align: top; }
+  tr:hover td { background: #f8fafc; }
+  td input, td textarea, td select { width: 100%; border: 1px solid transparent; background: transparent; font-family: inherit; font-size: 13px; color: var(--text); padding: 2px 4px; border-radius: 4px; }
+  td input:focus, td textarea:focus, td select:focus { outline: none; border-color: var(--presidio-accent); background: #fff; }
+  td textarea { min-height: 48px; resize: vertical; }
+  .add-row-btn { width: 100%; padding: 7px; text-align: center; background: #f8fafc; border: 1px dashed var(--border); border-top: none; cursor: pointer; font-size: 12px; color: var(--text-muted); font-weight: 600; }
+  .add-row-btn:hover { background: #e0f0ff; color: var(--info); }
+  .del-row { padding: 3px 7px; background: #fee2e2; color: var(--danger); border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 700; }
+  .list-editor { display: flex; flex-direction: column; gap: 6px; }
+  .list-item { display: flex; gap: 6px; align-items: center; }
+  .list-item input { flex: 1; padding: 6px 10px; border: 1px solid var(--border); border-radius: 5px; font-size: 13px; font-family: inherit; }
+  .list-item .del-item { padding: 5px 9px; background: #fee2e2; color: var(--danger); border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 700; }
+  .add-item-btn { align-self: flex-start; padding: 5px 12px; background: #e0f0ff; color: var(--info); border: 1px dashed #b3d4f5; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 600; margin-top: 4px; }
+  .loe-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .loe-card { background: #f0f4fa; border-radius: 8px; padding: 14px; text-align: center; border: 1px solid var(--border); }
+  .loe-card .number { font-size: 28px; font-weight: 800; color: var(--presidio-blue); }
+  .loe-card .label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; margin-top: 2px; }
+  #history-panel { position: fixed; right: 0; top: 0; bottom: 0; width: 320px; background: #fff; border-left: 1px solid var(--border); box-shadow: -4px 0 16px rgba(0,0,0,.1); z-index: 200; transform: translateX(100%); transition: transform .3s; display: flex; flex-direction: column; }
+  #history-panel.open { transform: translateX(0); }
+  #history-panel .panel-header { padding: 16px; background: var(--presidio-blue); color: #fff; display: flex; justify-content: space-between; align-items: center; }
+  #history-panel .panel-body { flex: 1; overflow-y: auto; padding: 12px; }
+  .history-item { padding: 10px; border-radius: 6px; background: #f8fafc; border: 1px solid var(--border); margin-bottom: 8px; font-size: 12px; }
+  #publish-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 300; align-items: center; justify-content: center; }
+  #publish-modal.open { display: flex; }
+  .modal-box { background: #fff; border-radius: 12px; padding: 28px; max-width: 480px; width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,.2); }
+  .modal-box h3 { font-size: 18px; color: var(--presidio-blue); margin-bottom: 8px; }
+  .modal-box p { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; }
+  .modal-list { list-style: none; margin-bottom: 20px; }
+  .modal-list li { padding: 5px 0; font-size: 13px; display: flex; align-items: center; gap: 7px; }
+  .modal-list li::before { content: '✏️'; }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #1a2233; color: #fff; padding: 10px 22px; border-radius: 8px; font-size: 13px; font-weight: 600; box-shadow: 0 4px 20px rgba(0,0,0,.3); opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 400; }
+  #toast.show { opacity: 1; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media(max-width:700px) { .two-col, .phase-grid { grid-template-columns: 1fr; } }
+  .citation { font-size: 11px; color: var(--text-muted); font-style: italic; margin-top: 4px; }
+  .section-footer { padding: 8px 20px; background: #f8fafc; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-muted); display: flex; justify-content: space-between; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <div class="logo">PRESIDIO <span>DIGITAL</span></div>
+  <div class="toolbar">
+    <button class="btn btn-secondary" onclick="toggleHistory()">📋 History</button>
+    <button class="btn btn-secondary" onclick="toggleEditAll()">✏️ Edit All</button>
+    <button class="btn btn-warning" onclick="resetAll()">🔄 Reset All</button>
+    <button class="btn btn-primary" onclick="downloadMD()">📥 Download .md</button>
+    <button class="btn btn-success" onclick="openPublish()">📤 Publish</button>
+  </div>
+</div>
+<div id="status-bar">
+  <span><span class="dot"></span> Solution Architecture: PayPal → Stripe Migration</span>
+  <span id="edited-count">✏️ 0 sections edited</span>
+  <span>⏱ Est. Duration: ~13 weeks</span>
+  <span>💰 Budget: $20K–$75K</span>
+  <span><span class="badge badge-ready">Ready for Review</span></span>
+</div>
+<div class="container">
+  <div class="page-header">
+    <h1>💳 PayPal → Stripe Payment Gateway Migration</h1>
+    <p style="opacity:.85;margin-top:6px;font-size:14px;">Solution Architecture Summary · Presidio Digital Practice</p>
+    <div class="meta">
+      <span>📅 June 18, 2026</span>
+      <span>🏗 Node.js / Subscriptions</span>
+      <span>🎯 Developer Experience</span>
+      <span>💼 1–3 Months · $20K–$75K</span>
+      <span>👤 Prepared for: Abirami Kannan</span>
+    </div>
+  </div>
+
+  <!-- SECTION 1: OUR UNDERSTANDING -->
+  <div class="section" id="sec-understanding">
+    <div class="section-header" onclick="toggleSection('sec-understanding')">
+      <h2>🔍 Our Understanding</h2>
+      <div class="section-actions" onclick="event.stopPropagation()">
+        <button class="btn-sm btn-edit" onclick="enableEdit('understanding-text')">✏️ Edit</button>
+        <button class="btn-sm btn-copy" onclick="copySection('understanding-text')">📋 Copy</button>
+        <button class="btn-sm btn-reset" onclick="resetSection('sec-understanding','understanding-text')">🔄 Reset</button>
+      </div>
+    </div>
+    <div class="section-body">
+      <textarea class="editable-text" id="understanding-text" rows="6" oninput="markEdited('sec-understanding');updateCount(this,'understanding-count')" readonly>The client is operating a Node.js backend application that currently uses PayPal as its payment gateway. The business need is to migrate to Stripe to leverage a significantly superior developer experience — including Stripe's industry-leading REST APIs, 300+ webhook event types (vs. PayPal's ~30), and a richer SDK ecosystem for Node.js. The migration must be completed within a 1–3 month standard timeline with a budget of $20K–$75K, with minimal disruption to live recurring/subscription payment operations.
+
+The core technical challenge is that PayPal stored payment methods (vaulted cards and PayPal accounts) CANNOT be directly ported to Stripe. A parallel-run strategy with a customer re-authentication flow is mandatory to avoid subscription revenue disruption. Stripe Billing's advanced subscription management capabilities — smart retry logic (recovering 10–15% of failed payments), proration management, metered billing, and a built-in Customer Portal — make this migration a high-value investment beyond pure developer experience improvements.</textarea>
+      <div class="char-count" id="understanding-count"></div>
+    </div>
+    <div class="section-footer"><span>Section 1 of 11</span><span id="understanding-status">Unedited</span></div>
+  </div>
+
+  <!-- SECTION 2: EXECUTIVE SUMMARY -->
+  <div class="section" id="sec-exec">
+    <div class="section-header" onclick="toggleSection('sec-exec')">
+      <h2>📋 Executive Summary</h2>
+      <div class="section-actions" onclick="event.stopPropagation()">
+        <button class="btn-sm btn-edit" onclick="enableEdit('exec-text')">✏️ Edit</button>
+        <button class="btn-sm btn-copy" onclick="copySection('exec-text')">📋 Copy</button>
+        <button class="btn-sm btn-reset" onclick="resetSection('sec-exec','exec-text')">🔄 Reset</button>
+      </div>
+    </div>
+    <div class="section-body">
+      <textarea class="editable-text" id="exec-text" rows="8" oninput="markEdited('sec-exec')" readonly>The client's Node.js payment integration has reached a functional ceiling for a subscription-driven business. PayPal supports approximately 30 webhook event types and basic recurring billing, whereas Stripe offers 300+ webhook event types, smart dunning/retry logic, proration management, and a native Customer Portal — all critical for a healthy subscription business.
+
+Presidio recommends a phased parallel-run migration approach: new subscribers are onboarded to Stripe immediately while existing PayPal subscribers are migrated through a customer re-authentication campaign. This eliminates the risk of forced subscription cancellations and preserves revenue continuity. The Stripe Billing Migration Toolkit enables no-code CSV-based subscription import once customer payment methods are re-authenticated.
+
+Expected outcomes: fully operational Stripe-powered subscription platform, improved payment recovery rates (10–15%) via smart retry, richer developer experience, and clean PayPal decommission — all within the 1–3 month target at an estimated $48,000–$58,000 (T&M).</textarea>
+    </div>
+    <div class="section-footer"><span>Section 2 of 11</span><span id="exec-status">Unedited</span></div>
+  </div>
+
+  <!-- SECTION 3: ARCHITECTURE -->
+  <div class="section" id="sec-arch">
+    <div class="section-header" onclick="toggleSection('sec-arch')">
+      <h2>🏗 Solution Approach &amp; Architecture</h2>
+      <div class="section-actions" onclick="event.stopPropagation()">
+        <button class="btn-sm btn-edit" onclick="enableEdit('arch-text')">✏️ Edit</button>
+        <button class="btn-sm btn-copy" onclick="copySection('arch-text')">📋 Copy</button>
+        <button class="btn-sm btn-reset" onclick="resetSection('sec-arch','arch-text')">🔄 Reset</button>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="field-group">
+        <div class="field-label">Architecture Approach</div>
+        <textarea class="editable-text" id="arch-text" rows="5" oninput="markEdited('sec-arch')" readonly>API-driven, event-sourced payment integration with Node.js as the orchestration layer. Parallel-run feature-flag strategy ensures zero-downtime migration with instant rollback.
+
+Flow: [Node.js App] → Stripe SDK → [Stripe Platform]
+  ├ Stripe Billing (Subscriptions, Invoices, Customer Portal)
+  ├ Stripe Radar (Fraud Detection)
+  ├ Webhooks → [Node.js Handler] → [App DB]
+  └ Stripe Dashboard (Reporting)</textarea>
+      </div>
+      <div class="two-col">
+        <div class="field-group">
+          <div class="field-label">Key Components</div>
+          <div class="list-editor" id="components-list">
+            <div class="list-item"><input type="text" value="Stripe Billing — Subscriptions, invoices, smart retry, Customer Portal"/><button class="del-item" onclick="delItem(this)">✕</button></div>
+            <div class="list-item"><input type="text" value="Stripe Node.js SDK v21 — PaymentIntent, Customer, Subscription APIs"/><button class="del-item" onclick="delItem(this)">✕</button></div>
+            <div class="list-item"><input type="text" value="Stripe Radar — ML-powered fraud detection with customizable rules"/><button class="del-item" onclick="delItem(this)">✕</button></div>
+            <div class="list-item"><input type="text" value="Stripe Webhooks — 300+ event types; async payment state management"/><button class="del-item" onclick="delItem(this)">✕</button></div>
+            <div class="list-item"><input type="text" value="Stripe Billing Migration Toolkit — No-code CSV subscription import"/><button class="del-item" onclick="delItem(this)">✕</button></div>
+            <div class="list-item"><input type="text" value="Feature Flag System — Progressive traffic migration; instant rollback"/><button class="del-item" onclick="delItem(this)">✕</button></div>
+          </div>
+          <button class="add-item-btn" onclick="addItem('components-list')">+ Add Component</button>
+        </div>
+        <div class="field-group">
+          <div class="field-label">Deployment Model</div>
+          <textarea class="editable-text" id="deploy-text" rows="5" oninput="markEdited('sec-arch')" readonly>Cloud-hosted (existing Node.js infrastructure retained). No new infrastructure required — Stripe integration is purely API-based. API keys managed via AWS Secrets Manager. Parallel-run: both PayPal and Stripe active with feature flag controlling traffic split. PayPal decommissioned after 100% traffic migration.</textarea>
+        </div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Data Flow</div>
+        <textarea class="editable-text" id="dataflow-text" rows="4" oninput="markEdited('sec-arch')" readonly>1. New subscriber → Node.js creates Stripe Customer+Subscription → Stripe returns client_secret → Frontend confirms → Webhook fires subscription.created → App DB updated
+2. Existing PayPal subscriber receives re-auth email → Stripe Customer Portal → Migration Toolkit imports subscription → PayPal subscription cancelled
+3. Recurring billing → Stripe auto-invoices → Smart retry on failure → Webhook fires invoice events → App DB updated</textarea>
+      </div>
+      <p class="citation">[Source: Stripe Billing - https://docs.stripe.com/billing] · [Source: Stripe Node.js SDK - https://docs.stripe.com/sdks/node]</p>
+    </div>
+    <div class="section-footer"><span>Section 3 of 11</span><span id="arch-status">Unedited</span></div>
+  </div>
+
+  <!-- SECTION 4: IMPLEMENTATION PHASES -->
+  <div class="section" id="sec-phases">
+    <div class="section-header" onclick="toggleSection('sec-phases')">
+      <h2>🗓 Implementation Phases</h2>
+    </div>
+    <div class="section-body">
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab(this,'phase1')">Phase 1</button>
+        <button class="tab" onclick="switchTab(this,'phase2')">Phase 2</button>
+        <button class="tab" onclick="switchTab(this,'phase3')">Phase 3</button>
+        <button class="tab" onclick="switchTab(this,'phase4')">Phase 4</button>
+        <button class="tab" onclick="switchTab(this,'phase5')">Phase 5</button>
+      </div>
+      <div class="tab-content active" id="phase1">
+        <div class="phase-grid">
+          <div class="field-group"><div class="field-label">Phase Name</div><input class="editable-input" value="Phase 1: Discovery and Design" oninput="markEdited('sec-phases')"/></div>
+          <div class="phase-meta"><div class="phase-meta-item"><strong>Duration:</strong> 2 weeks</div><div class="phase-meta-item"><strong>LOE:</strong> 80 hours</div></div>
+        </div>
+        <div class="phase-grid">
+          <div class="field-group"><div class="field-label">Key Activities</div><div class="list-editor" id="p1-act"><div class="list-item"><input value="Audit existing PayPal SDK, integration points, and webhook logic"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Map all PayPal webhook events and downstream DB effects"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Design Stripe Billing architecture: Products, Prices, Subscriptions"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Define feature flag strategy for parallel-run and rollback"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Design subscriber re-authentication campaign"/><button class="del-item" onclick="delItem(this)">✕</button></div></div><button class="add-item-btn" onclick="addItem('p1-act')">+ Add</button></div>
+          <div class="field-group"><div class="field-label">Deliverables</div><div class="list-editor" id="p1-del"><div class="list-item"><input value="Current State Assessment Document"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Target Stripe Architecture Design Document"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Subscriber Migration Strategy"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Test Plan and Acceptance Criteria"/><button class="del-item" onclick="delItem(this)">✕</button></div></div><button class="add-item-btn" onclick="addItem('p1-del')">+ Add</button></div>
+        </div>
+        <div class="field-group"><div class="field-label">Approach</div><input class="editable-input" value="Agile discovery · [Presidio Presales: 06-delivery-methods/agile-delivery-framework.md]"/></div>
+      </div>
+      <div class="tab-content" id="phase2">
+        <div class="phase-grid">
+          <div class="field-group"><div class="field-label">Phase Name</div><input class="editable-input" value="Phase 2: Development and Configuration"/></div>
+          <div class="phase-meta"><div class="phase-meta-item"><strong>Duration:</strong> 5 weeks</div><div class="phase-meta-item"><strong>LOE:</strong> 240 hours</div></div>
+        </div>
+        <div class="phase-grid">
+          <div class="field-group"><div class="field-label">Key Activities</div><div class="list-editor" id="p2-act"><div class="list-item"><input value="Set up Stripe account, configure Products/Prices, enable Radar"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Implement Node.js backend: PaymentIntent, Customer, Subscription endpoints"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Implement idempotency keys to prevent duplicate charges"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Implement webhook handler with Stripe signature verification"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Configure Stripe Customer Portal for subscriber self-service"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Implement feature flag for parallel-run traffic routing"/><button class="del-item" onclick="delItem(this)">✕</button></div></div><button class="add-item-btn" onclick="addItem('p2-act')">+ Add</button></div>
+          <div class="field-group"><div class="field-label">Deliverables</div><div class="list-editor" id="p2-del"><div class="list-item"><input value="Stripe-integrated Node.js backend (dev environment)"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Webhook handler with signature verification"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Stripe Customer Portal configuration"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Feature flag config and rollback runbook"/><button class="del-item" onclick="delItem(this)">✕</button></div></div><button class="add-item-btn" onclick="addItem('p2-del')">+ Add</button></div>
+        </div>
+        <div class="field-group"><div class="field-label">Approach</div><input class="editable-input" value="Agile 2-week sprints · [Presidio Presales: 06-delivery-methods/agile-delivery-framework.md]"/></div>
+      </div>
+      <div class="tab-content" id="phase3">
+        <div class="phase-grid">
+          <div class="field-group"><div class="field-label">Phase Name</div><input class="editable-input" value="Phase 3: Testing and Validation"/></div>
+          <div class="phase-meta"><div class="phase-meta-item"><strong>Duration:</strong> 2 weeks</div><div class="phase-meta-item"><strong>LOE:</strong> 80 hours</div></div>
+        </div>
+        <div class="phase-grid">
+          <div class="field-group"><div class="field-label">Key Activities</div><div class="list-editor" id="p3-act"><div class="list-item"><input value="Unit testing with Stripe test card numbers"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Integration testing: subscription create/upgrade/cancel"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Webhook testing via Stripe CLI"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="UAT with stakeholders on staging — sign-off required"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Security testing: API key scan, webhook signature validation"/><button class="del-item" onclick="delItem(this)">✕</button></div></div><button class="add-item-btn" onclick="addItem('p3-act')">+ Add</button></div>
+          <div class="field-group"><div class="field-label">Deliverables</div><div class="list-editor" id="p3-del"><div class="list-item"><input value="Test Execution Report"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="UAT Sign-off Document"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Security Review Sign-off"/><button class="del-item" onclick="delItem(this)">✕</button></div></div><button class="add-item-btn" onclick="addItem('p3-del')">+ Add</button></div>
+        </div>
+        <div class="field-group"><div class="field-label">Approach</div><input class="editable-input" value="Structured QA with Stripe CLI · [Presidio Presales: 06-delivery-methods/agile-delivery-framework.md]"/></div>
+      </div>
+      <div class="tab-content" id="phase4">
+        <div class="phase-grid">
+          <div class="field-group"><div class="field-label">Phase Name</div><input class="editable-input" value="Phase 4: Deployment and Cutover"/></div>
+          <div class="phase-meta"><div class="phase-meta-item"><strong>Duration:</strong> 2 weeks</div><div class="phase-meta-item"><strong>LOE:</strong> 60 hours</div></div>
+        </div>
+        <div class="phase-grid">
+          <div class="field-group"><div class="field-label">Key Activities</div><div class="list-editor" id="p4-act"><div class="list-item"><input value="Deploy Stripe-integrated backend to production"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Launch subscriber re-authentication campaign"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Gradual traffic migration: 10% → 50% → 100% Stripe"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Execute PayPal decommission checklist"/><button class="del-item" onclick="delItem(this)">✕</button></div></div><button class="add-item-btn" onclick="addItem('p4-act')">+ Add</button></div>
+          <div class="field-group"><div class="field-label">Deliverables</div><div class="list-editor" id="p4-del"><div class="list-item"><input value="Production Deployment Sign-off"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="PayPal Decommission Checklist (completed)"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Go-Live Confirmation Report"/><button class="del-item" onclick="delItem(this)">✕</button></div></div><button class="add-item-btn" onclick="addItem('p4-del')">+ Add</button></div>
+        </div>
+        <div class="field-group"><div class="field-label">Approach</div><input class="editable-input" value="Canary deployment · [Presidio Presales: 06-delivery-methods/agile-delivery-framework.md]"/></div>
+      </div>
+      <div class="tab-content" id="phase5">
+        <div class="phase-grid">
+          <div class="field-group"><div class="field-label">Phase Name</div><input class="editable-input" value="Phase 5: Hypercare and Handoff"/></div>
+          <div class="phase-meta"><div class="phase-meta-item"><strong>Duration:</strong> 2 weeks</div><div class="phase-meta-item"><strong>LOE:</strong> 40 hours</div></div>
+        </div>
+        <div class="phase-grid">
+          <div class="field-group"><div class="field-label">Key Activities</div><div class="list-editor" id="p5-act"><div class="list-item"><input value="Daily monitoring of Stripe Radar alerts and webhook delivery"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Review first production billing cycle for anomalies"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Knowledge transfer sessions with client engineering team"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Finalize operations runbook and project closure docs"/><button class="del-item" onclick="delItem(this)">✕</button></div></div><button class="add-item-btn" onclick="addItem('p5-act')">+ Add</button></div>
+          <div class="field-group"><div class="field-label">Deliverables</div><div class="list-editor" id="p5-del"><div class="list-item"><input value="Hypercare Monitoring Report"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Operations Runbook"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Project Closure Report"/><button class="del-item" onclick="delItem(this)">✕</button></div></div><button class="add-item-btn" onclick="addItem('p5-del')">+ Add</button></div>
+        </div>
+        <div class="field-group"><div class="field-label">Approach</div><input class="editable-input" value="Hypercare with daily standups · [Presidio Presales: 06-delivery-methods/agile-delivery-framework.md]"/></div>
+      </div>
+    </div>
+    <div class="section-footer"><span>Section 4 of 11</span><span id="phases-status">Unedited</span></div>
+  </div>
+
+  <!-- SECTION 5: TEAM -->
+  <div class="section" id="sec-team">
+    <div class="section-header" onclick="toggleSection('sec-team')">
+      <h2>👥 Team Summary / Metrics</h2>
+    </div>
+    <div class="section-body">
+      <div class="loe-grid">
+        <div class="loe-card"><div class="number">575</div><div class="label">Total Hours</div></div>
+        <div class="loe-card"><div class="number">13</div><div class="label">Weeks Duration</div></div>
+        <div class="loe-card"><div class="number">5.5</div><div class="label">FTE Team Size</div></div>
+        <div class="loe-card"><div class="number">15%</div><div class="label">Buffer Included</div></div>
+      </div>
+      <div class="table-wrapper">
+        <table id="team-table">
+          <thead><tr><th>Role</th><th>Allocation</th><th>Hours</th><th>Responsibilities</th><th>Key Skills</th><th></th></tr></thead>
+          <tbody>
+            <tr><td><input value="Solution Architect"/></td><td><input value="100%"/></td><td><input value="80 hrs"/></td><td><textarea>Architecture design, technical governance, client communication</textarea></td><td><input value="Payment systems, API design, Node.js"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+            <tr><td><input value="Senior Backend Engineer (Node.js)"/></td><td><input value="100%"/></td><td><input value="160 hrs"/></td><td><textarea>Stripe SDK integration, PaymentIntent, webhook handlers</textarea></td><td><input value="Node.js, Stripe SDK v21"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+            <tr><td><input value="Senior Backend Engineer (Subscriptions)"/></td><td><input value="75%"/></td><td><input value="120 hrs"/></td><td><textarea>Stripe Billing, Customer Portal, Migration Toolkit</textarea></td><td><input value="Stripe Billing, subscription systems"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+            <tr><td><input value="QA Engineer"/></td><td><input value="75%"/></td><td><input value="80 hrs"/></td><td><textarea>Test planning, Stripe CLI testing, automation</textarea></td><td><input value="API testing, Stripe CLI"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+            <tr><td><input value="Project Manager"/></td><td><input value="100%"/></td><td><input value="60 hrs"/></td><td><textarea>Sprint management, stakeholder comms, risk tracking</textarea></td><td><input value="Agile PM, payment projects"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+            <tr><td><input value="Security Architect"/></td><td><input value="50%"/></td><td><input value="35 hrs"/></td><td><textarea>Stripe Radar config, secrets management review</textarea></td><td><input value="AppSec, Stripe Radar"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+          </tbody>
+        </table>
+        <div class="add-row-btn" onclick="addTeamRow()">+ Add Team Member</div>
+      </div>
+      <p class="citation" style="margin-top:10px;">[Presidio Presales: 05-team-staffing/cloud-projects-team-composition.md]</p>
+    </div>
+    <div class="section-footer"><span>Section 5 of 11</span><span id="team-status">Unedited</span></div>
+  </div>
+
+  <!-- SECTION 6: TECH STACK -->
+  <div class="section" id="sec-tech">
+    <div class="section-header" onclick="toggleSection('sec-tech')">
+      <h2>⚙️ Technology Stack</h2>
+    </div>
+    <div class="section-body">
+      <div class="table-wrapper">
+        <table id="tech-table">
+          <thead><tr><th>Category</th><th>Technology</th><th>Justification</th><th>Citations</th><th></th></tr></thead>
+          <tbody>
+            <tr><td><input value="Payment Platform"/></td><td><input value="Stripe"/></td><td><textarea>300+ webhooks vs PayPal's 30; superior Node.js SDK; smart retry recovers 10-15% failed payments</textarea></td><td><input value="[Source: https://docs.stripe.com]"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+            <tr><td><input value="Subscription Billing"/></td><td><input value="Stripe Billing"/></td><td><textarea>Smart dunning, proration, Customer Portal, CSV import toolkit</textarea></td><td><input value="[Source: https://docs.stripe.com/billing]"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+            <tr><td><input value="Backend Runtime"/></td><td><input value="Node.js 20+ / Stripe SDK v21"/></td><td><textarea>Existing client stack; SDK v21 requires Node >= 18; full TypeScript support</textarea></td><td><input value="[Source: https://github.com/stripe/stripe-node/wiki]"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+            <tr><td><input value="Fraud Detection"/></td><td><input value="Stripe Radar"/></td><td><textarea>ML-powered fraud scoring; customizable rules; 3DS trigger rules</textarea></td><td><input value="[Source: https://docs.stripe.com/radar]"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+            <tr><td><input value="Secrets Management"/></td><td><input value="AWS Secrets Manager"/></td><td><textarea>Secure Stripe API key storage and rotation</textarea></td><td><input value="[Source: https://docs.stripe.com/keys]"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+            <tr><td><input value="Feature Flags"/></td><td><input value="LaunchDarkly / Custom"/></td><td><textarea>Progressive traffic migration; instant rollback capability</textarea></td><td><input value="[Source: https://docs.launchdarkly.com]"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+          </tbody>
+        </table>
+        <div class="add-row-btn" onclick="addTechRow()">+ Add Technology</div>
+      </div>
+    </div>
+    <div class="section-footer"><span>Section 6 of 11</span><span id="tech-status">Unedited</span></div>
+  </div>
+
+  <!-- SECTION 7: RISKS -->
+  <div class="section" id="sec-risks">
+    <div class="section-header" onclick="toggleSection('sec-risks')">
+      <h2>⚠️ Risks &amp; Mitigation</h2>
+    </div>
+    <div class="section-body">
+      <div class="table-wrapper">
+        <table id="risk-table">
+          <thead><tr><th>Risk</th><th>Impact</th><th>Probability</th><th>Mitigation</th><th>Citations</th><th></th></tr></thead>
+          <tbody>
+            <tr><td><textarea>Subscriber re-authentication rate below 70%</textarea></td><td><select><option>High</option><option>Medium</option><option>Low</option></select></td><td><select><option>High</option><option selected>Medium</option><option>Low</option></select></td><td><textarea>Offer discount incentive; 3 reminder emails; extend parallel-run until >85% migrated</textarea></td><td><input value="[Source: Stripe Migration Guide]"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+            <tr><td><textarea>Double-billing during migration</textarea></td><td><select><option>High</option><option>Medium</option><option>Low</option></select></td><td><select><option>High</option><option>Medium</option><option selected>Low</option></select></td><td><textarea>Set proration_behavior=none; review all subscriptions before activation</textarea></td><td><input value="[Source: Stripe Billing Migration Toolkit]"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+            <tr><td><textarea>Stripe Radar over-blocking legitimate transactions</textarea></td><td><select><option>High</option><option>Medium</option><option>Low</option></select></td><td><select><option>High</option><option selected>Medium</option><option>Low</option></select></td><td><textarea>Configure rules conservatively; monitor daily; tune based on production data</textarea></td><td><input value="[Source: https://docs.stripe.com/radar/rules]"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+            <tr><td><textarea>Stripe API key exposure in source code</textarea></td><td><select><option selected>High</option><option>Medium</option><option>Low</option></select></td><td><select><option>High</option><option>Medium</option><option selected>Low</option></select></td><td><textarea>Use Secrets Manager; pre-commit hook; rotate immediately if exposed</textarea></td><td><input value="[Source: https://docs.stripe.com/keys]"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+            <tr><td><textarea>Node.js SDK v21 breaking changes</textarea></td><td><select><option>High</option><option selected>Medium</option><option>Low</option></select></td><td><select><option>High</option><option selected>Medium</option><option>Low</option></select></td><td><textarea>Review v21 migration guide; ensure Node >= 18; run full regression after upgrade</textarea></td><td><input value="[Source: Stripe Node SDK v21 Migration]"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td></tr>
+          </tbody>
+        </table>
+        <div class="add-row-btn" onclick="addRiskRow()">+ Add Risk</div>
+      </div>
+    </div>
+    <div class="section-footer"><span>Section 7 of 11</span><span id="risks-status">Unedited</span></div>
+  </div>
+
+  <!-- SECTION 8: ASSUMPTIONS -->
+  <div class="section" id="sec-assumptions">
+    <div class="section-header" onclick="toggleSection('sec-assumptions')">
+      <h2>📌 Assumptions &amp; Dependencies</h2>
+    </div>
+    <div class="section-body">
+      <div class="two-col">
+        <div class="field-group"><div class="field-label">Assumptions</div><div class="list-editor" id="assumptions-list"><div class="list-item"><input value="Client has an existing Node.js backend"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Client can complete Stripe KYC verification within Week 1"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Node.js runtime is version 18 or higher"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Existing subscription plans map 1:1 to Stripe Products and Prices"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Staging/test environment exists for integration testing"/><button class="del-item" onclick="delItem(this)">✕</button></div></div><button class="add-item-btn" onclick="addItem('assumptions-list')">+ Add</button></div>
+        <div class="field-group"><div class="field-label">Dependencies</div><div class="list-editor" id="dependencies-list"><div class="list-item"><input value="Stripe account creation and KYC approval (client, Week 1)"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="PayPal transaction history export before decommission"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Client stakeholder availability for UAT sign-off in Phase 3"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="Email marketing platform access for re-authentication campaign"/><button class="del-item" onclick="delItem(this)">✕</button></div></div><button class="add-item-btn" onclick="addItem('dependencies-list')">+ Add</button></div>
+      </div>
+    </div>
+    <div class="section-footer"><span>Section 8 of 11</span><span id="assumptions-status">Unedited</span></div>
+  </div>
+
+  <!-- SECTION 9: KPIs -->
+  <div class="section" id="sec-kpis">
+    <div class="section-header" onclick="toggleSection('sec-kpis')">
+      <h2>📊 Success Metrics &amp; KPIs</h2>
+    </div>
+    <div class="section-body">
+      <div class="list-editor" id="kpis-list">
+        <div class="list-item"><input value="100% of new subscribers onboarded to Stripe by end of Phase 2"/><button class="del-item" onclick="delItem(this)">✕</button></div>
+        <div class="list-item"><input value="≥85% of existing PayPal subscribers re-authenticated within 4 weeks"/><button class="del-item" onclick="delItem(this)">✕</button></div>
+        <div class="list-item"><input value="Zero double-billing incidents during migration"/><button class="del-item" onclick="delItem(this)">✕</button></div>
+        <div class="list-item"><input value="Stripe smart retry recovers ≥10% of initially failed payments"/><button class="del-item" onclick="delItem(this)">✕</button></div>
+        <div class="list-item"><input value="Zero P1 security incidents post go-live"/><button class="del-item" onclick="delItem(this)">✕</button></div>
+        <div class="list-item"><input value="PayPal fully decommissioned within 3 months of project start"/><button class="del-item" onclick="delItem(this)">✕</button></div>
+        <div class="list-item"><input value="Stripe Radar false positive rate ≤0.5% of legitimate transactions"/><button class="del-item" onclick="delItem(this)">✕</button></div>
+      </div>
+      <button class="add-item-btn" onclick="addItem('kpis-list')">+ Add KPI</button>
+    </div>
+    <div class="section-footer"><span>Section 9 of 11</span><span id="kpis-status">Unedited</span></div>
+  </div>
+
+  <!-- SECTION 10: BUDGET -->
+  <div class="section" id="sec-budget">
+    <div class="section-header" onclick="toggleSection('sec-budget')">
+      <h2>💰 Price &amp; Next Steps</h2>
+    </div>
+    <div class="section-body">
+      <div class="loe-grid">
+        <div class="loe-card"><div class="number">$48K</div><div class="label">Estimated Low</div></div>
+        <div class="loe-card"><div class="number">$58K</div><div class="label">Estimated High</div></div>
+        <div class="loe-card"><div class="number">575</div><div class="label">Total Hours (T&amp;M)</div></div>
+        <div class="loe-card"><div class="number">$83–100</div><div class="label">Blended Rate/hr</div></div>
+      </div>
+      <div class="field-group"><div class="field-label">Next Steps</div><div class="list-editor" id="nextsteps-list"><div class="list-item"><input value="1. Client approves Solution Architecture Summary"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="2. Presidio issues Statement of Work (SOW) for signature"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="3. Client begins Stripe account creation and KYC (Week 1)"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="4. Project kickoff — assign roles, confirm timeline, review test plan"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="5. Phase 1 Discovery begins"/><button class="del-item" onclick="delItem(this)">✕</button></div></div><button class="add-item-btn" onclick="addItem('nextsteps-list')">+ Add Step</button></div>
+      <p class="citation" style="margin-top:12px;">Services: ~$48K–$58K T&M · [Presidio Presales: 05-team-staffing/cost-models.md]</p>
+    </div>
+    <div class="section-footer"><span>Section 10 of 11</span><span id="budget-status">Unedited</span></div>
+  </div>
+
+  <!-- SECTION 11: SOURCES -->
+  <div class="section" id="sec-sources">
+    <div class="section-header" onclick="toggleSection('sec-sources')">
+      <h2>📚 Sources &amp; References</h2>
+    </div>
+    <div class="section-body">
+      <div class="two-col">
+        <div class="field-group"><div class="field-label">Presidio Presales Resources</div><div class="list-editor" id="sources-presidio"><div class="list-item"><input value="[Presidio Presales: 06-delivery-methods/agile-delivery-framework.md]"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="[Presidio Presales: 05-team-staffing/cloud-projects-team-composition.md]"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="[Presidio Presales: 05-team-staffing/cost-models.md]"/><button class="del-item" onclick="delItem(this)">✕</button></div></div></div>
+        <div class="field-group"><div class="field-label">External Sources</div><div class="list-editor" id="sources-external"><div class="list-item"><input value="[Source: Stripe Documentation - https://docs.stripe.com]"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="[Source: Stripe Billing Migration Toolkit - https://docs.stripe.com/billing/subscriptions/import-subscriptions-toolkit]"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="[Source: Stripe Node SDK v21 - https://github.com/stripe/stripe-node/wiki/Migration-guide-for-v21]"/><button class="del-item" onclick="delItem(this)">✕</button></div><div class="list-item"><input value="[Source: Stripe Radar - https://docs.stripe.com/radar/rules]"/><button class="del-item" onclick="delItem(this)">✕</button></div></div></div>
+      </div>
+    </div>
+    <div class="section-footer"><span>Section 11 of 11</span><span style="color:var(--presidio-blue);font-weight:700;">© Presidio, Inc. All rights reserved. Proprietary and Confidential.</span></div>
+  </div>
+
+</div>
+
+<!-- HISTORY PANEL -->
+<div id="history-panel">
+  <div class="panel-header"><h3>📋 Change History</h3><button onclick="toggleHistory()" style="background:none;border:none;color:#fff;font-size:18px;cursor:pointer;">✕</button></div>
+  <div class="panel-body" id="history-body"><p style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px;">No changes yet.</p></div>
+</div>
+
+<!-- PUBLISH MODAL -->
+<div id="publish-modal">
+  <div class="modal-box">
+    <h3>📤 Ready to Publish?</h3>
+    <p>This will finalize the solution architecture document.</p>
+    <ul class="modal-list" id="modal-edited-list"><li>No sections edited yet</li></ul>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" style="background:#f0f4fa;color:var(--text);" onclick="closePublish()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmPublish()">✅ Confirm &amp; Publish</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+let editedSections=new Set(),historyLog=[],editAllMode=false;
+const originalValues={};
+window.addEventListener('DOMContentLoaded',()=>{document.querySelectorAll('textarea.editable-text').forEach(el=>{originalValues[el.id]=el.value;});updateEditedCount();});
+function toggleSection(id){const b=document.querySelector('#'+id+' .section-body'),f=document.querySelector('#'+id+' .section-footer');if(b){const h=b.style.display==='none';b.style.display=h?'':'none';if(f)f.style.display=h?'':'none';}}
+function enableEdit(id){const el=document.getElementById(id);if(el){el.readOnly=false;el.focus();}}
+function markEdited(id){const s=document.getElementById(id);if(!s)return;if(!editedSections.has(id)){editedSections.add(id);s.classList.add('edited');const st=document.getElementById(id.replace('sec-','')+'-status');if(st)st.textContent='✏️ Edited';addHistory(id,'Section edited');updateEditedCount();}}
+function updateEditedCount(){document.getElementById('edited-count').textContent=`✏️ ${editedSections.size} section${editedSections.size!==1?'s':''} edited`;}
+function resetSection(sid,tid){const el=document.getElementById(tid);if(el&&originalValues[tid]){el.value=originalValues[tid];el.readOnly=true;}const s=document.getElementById(sid);if(s)s.classList.remove('edited');editedSections.delete(sid);const st=document.getElementById(sid.replace('sec-','')+'-status');if(st)st.textContent='Unedited';updateEditedCount();showToast('Section reset');}
+function resetAll(){if(!confirm('Reset ALL sections?'))return;document.querySelectorAll('textarea.editable-text').forEach(el=>{if(originalValues[el.id]){el.value=originalValues[el.id];el.readOnly=true;}});document.querySelectorAll('.section').forEach(s=>s.classList.remove('edited'));document.querySelectorAll('[id$="-status"]').forEach(el=>el.textContent='Unedited');editedSections.clear();updateEditedCount();showToast('All sections reset');}
+function toggleEditAll(){editAllMode=!editAllMode;document.querySelectorAll('textarea.editable-text').forEach(el=>{el.readOnly=!editAllMode;});showToast(editAllMode?'All text sections unlocked':'Edit mode off');}
+function updateCount(el,cid){const c=document.getElementById(cid);if(c)c.textContent=el.value.length+' chars';}
+function copySection(id){const el=document.getElementById(id);if(el){navigator.clipboard.writeText(el.value);showToast('Copied!');} }
+function switchTab(btn,tid){btn.closest('.section-body').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.closest('.section-body').querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));btn.classList.add('active');document.getElementById(tid).classList.add('active');}
+function addItem(lid){const l=document.getElementById(lid);const d=document.createElement('div');d.className='list-item';d.innerHTML='<input type="text" placeholder="Enter item..."/><button class="del-item" onclick="delItem(this)">✕</button>';l.appendChild(d);d.querySelector('input').focus();}
+function delItem(btn){btn.closest('.list-item').remove();}
+function addTeamRow(){const tb=document.querySelector('#team-table tbody');const tr=document.createElement('tr');tr.innerHTML='<td><input placeholder="Role"/></td><td><input value="100%"/></td><td><input value="0 hrs"/></td><td><textarea placeholder="Responsibilities"></textarea></td><td><input placeholder="Skills"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td>';tb.appendChild(tr);}
+function addTechRow(){const tb=document.querySelector('#tech-table tbody');const tr=document.createElement('tr');tr.innerHTML='<td><input placeholder="Category"/></td><td><input placeholder="Technology"/></td><td><textarea placeholder="Justification"></textarea></td><td><input placeholder="[Source: ...]"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td>';tb.appendChild(tr);}
+function addRiskRow(){const tb=document.querySelector('#risk-table tbody');const tr=document.createElement('tr');tr.innerHTML='<td><textarea placeholder="Risk"></textarea></td><td><select><option>High</option><option>Medium</option><option>Low</option></select></td><td><select><option>High</option><option>Medium</option><option>Low</option></select></td><td><textarea placeholder="Mitigation"></textarea></td><td><input placeholder="[Source: ...]"/></td><td><button class="del-row" onclick="delRow(this)">✕</button></td>';tb.appendChild(tr);}
+function delRow(btn){btn.closest('tr').remove();}
+function addHistory(sid,action){const now=new Date().toLocaleTimeString();historyLog.unshift({time:now,section:sid.replace('sec-','').toUpperCase(),action});document.getElementById('history-body').innerHTML=historyLog.map(h=>`<div class="history-item"><div style="color:var(--text-muted);font-size:11px;">${h.time}</div><div style="font-weight:700;color:var(--presidio-blue);">${h.section}</div><div>${h.action}</div></div>`).join('');}
+function toggleHistory(){document.getElementById('history-panel').classList.toggle('open');}
+function openPublish(){const l=document.getElementById('modal-edited-list');l.innerHTML=editedSections.size===0?'<li style="color:var(--text-muted)">No sections edited</li>':[...editedSections].map(s=>`<li>${s.replace('sec-','').toUpperCase()}</li>`).join('');document.getElementById('publish-modal').classList.add('open');}
+function closePublish(){document.getElementById('publish-modal').classList.remove('open');}
+function confirmPublish(){closePublish();showToast('✅ Published!');addHistory('ALL','Document published');}
+function downloadMD(){const u=document.getElementById('understanding-text')?.value||'';const e=document.getElementById('exec-text')?.value||'';const a=document.getElementById('arch-text')?.value||'';const md=`# Solution Architecture\n## PayPal → Stripe Migration | Presidio\n**Date:** June 18, 2026\n\n## Our Understanding\n${u}\n\n## Executive Summary\n${e}\n\n## Architecture\n${a}\n\n## LOE\n| Phase | Duration | Hours |\n|---|---|---|\n| Phase 1: Discovery | 2 wks | 80 |\n| Phase 2: Development | 5 wks | 240 |\n| Phase 3: Testing | 2 wks | 80 |\n| Phase 4: Cutover | 2 wks | 60 |\n| Phase 5: Hypercare | 2 wks | 40 |\n| **TOTAL** | **13 wks** | **575** |\n\n## Budget\n~$48K–$58K T&M\n\n© Presidio, Inc.`;const b=new Blob([md],{type:'text/markdown'});const url=URL.createObjectURL(b);const a2=document.createElement('a');a2.href=url;a2.download='solution-architecture-paypal-to-stripe.md';a2.click();URL.revokeObjectURL(url);showToast('📥 Downloaded!');}
+function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2800);}
+</script>
+</body>
+</html>
